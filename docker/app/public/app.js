@@ -9,6 +9,14 @@ const DOOS = 1e6; // 1 HNS = 1,000,000 dollarydoos
 
 // ---- api -------------------------------------------------------------------
 
+// hsd reports errors as {message, ...} objects; our servers use plain strings.
+function errorText(data, fallback) {
+  const err = data && data.error;
+  if (!err) return fallback;
+  if (typeof err === 'string') return data.detail ? `${err}: ${data.detail}` : err;
+  return err.message || fallback;
+}
+
 async function rpc(method, params = []) {
   const r = await fetch('/api/rpc', {
     method: 'POST',
@@ -16,8 +24,7 @@ async function rpc(method, params = []) {
     body: JSON.stringify({method, params}),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || `RPC ${method} failed (${r.status})`);
-  if (data && data.error) throw new Error(data.error.message || String(data.error));
+  if (!r.ok || data.error) throw new Error(errorText(data, `RPC ${method} failed (${r.status})`));
   return data.result !== undefined ? data.result : data;
 }
 
@@ -25,9 +32,15 @@ async function rest(pathname) {
   const r = await fetch(`/api/rest/${pathname}`);
   if (r.status === 404) return null;
   const data = await r.json().catch(() => null);
-  if (!r.ok) throw new Error((data && data.error) || `REST ${pathname} failed (${r.status})`);
+  if (!r.ok) throw new Error(errorText(data, `REST ${pathname} failed (${r.status})`));
   return data;
 }
+
+const isSpvError = e => /spv mode/i.test(String(e && e.message));
+const SPV_NOTICE = 'Your Bob node is in SPV mode, so it does not store blocks, ' +
+  'transactions or address history. Name lookups still work. Switch Bob to ' +
+  'full-node mode and let it sync to use the rest of Finestra.';
+const notice = text => `<div class="error">${esc(text)}</div>`;
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -101,13 +114,17 @@ async function viewHome() {
   const want = 10;
   const heights = [];
   for (let h = height; h > Math.max(-1, height - want); h--) heights.push(h);
-  const blocks = await Promise.all(heights.map(h => rest(`block/${h}`).catch(() => null)));
+  let spv = false;
+  const blocks = await Promise.all(heights.map(h => rest(`block/${h}`).catch(e => {
+    if (isSpvError(e)) spv = true;
+    return null;
+  })));
 
   const stats = `<div class="grid">
     ${stat('Chain', esc(info.chain || 'main'))}
     ${stat('Height', num(info.blocks))}
     ${stat('Progress', info.verificationprogress != null ? (info.verificationprogress * 100).toFixed(2) + '%' : '—')}
-    ${stat('Chain size', info.size_on_disk ? (info.size_on_disk / 1e9).toFixed(1) + ' GB' : '—')}
+    ${stat('Difficulty', info.difficulty != null ? num(Math.round(info.difficulty)) : '—')}
   </div>`;
 
   const rows = blocks.filter(Boolean).map(b => `<tr>
@@ -117,7 +134,7 @@ async function viewHome() {
     <td class="right">${num((b.txs || []).length)}</td>
   </tr>`).join('');
 
-  setView(`<h1 class="page-title">Handshake explorer</h1>${stats}
+  setView(`<h1 class="page-title">Handshake explorer</h1>${spv ? notice(SPV_NOTICE) : ''}${stats}
     <h2>Latest blocks</h2>
     <div class="panel"><table>
       <thead><tr><th>Height</th><th>Hash</th><th>Time</th><th class="right">Txs</th></tr></thead>
@@ -156,9 +173,13 @@ async function viewName(name) {
 
   let records = '<p class="muted">No DNS records published.</p>';
   if (resource && Array.isArray(resource.records) && resource.records.length) {
+    const detail = r => {
+      if (r.type === 'DS') return `${r.keyTag} ${r.algorithm} ${r.digestType} ${r.digest}`;
+      if (r.type === 'TXT') return `"${(r.txt || []).join(' ')}"`;
+      return [r.ns, r.address].filter(Boolean).join(' ');
+    };
     records = `<ul class="records mono">${resource.records.map(r =>
-      `<li>${esc(r.type)}${r.ns ? ' ' + esc(r.ns) : ''}${r.address ? ' ' + esc(r.address) : ''}${r.dname ? ' ' + esc(r.dname) : ''}${r.txt ? ' "' + esc(r.txt.join(' ')) + '"' : ''}</li>`
-    ).join('')}</ul>`;
+      `<li>${esc(r.type)} ${esc(detail(r))}</li>`).join('')}</ul>`;
   }
 
   setView(`<h1 class="page-title">${esc(name)}<span class="pill">  ·  name</span></h1>
@@ -239,11 +260,14 @@ async function viewAddress(addr) {
   loading('Loading address…');
   let txs, coins;
   try {
-    [txs, coins] = await Promise.all([
-      rest(`tx/address/${addr}`).catch(() => []),
-      rest(`coin/address/${addr}`).catch(() => []),
-    ]);
-  } catch (e) { return showError(`Could not load address: ${e.message}`); }
+    [txs, coins] = await Promise.all([rest(`tx/address/${addr}`), rest(`coin/address/${addr}`)]);
+  } catch (e) {
+    if (isSpvError(e)) return showError(SPV_NOTICE);
+    if (/too large|timed out|aborted/i.test(e.message)) {
+      return showError('This address has too much history for the node to return in one request.');
+    }
+    return showError(`Could not load address: ${e.message}`);
+  }
   txs = Array.isArray(txs) ? txs : [];
   coins = Array.isArray(coins) ? coins : [];
   const balance = coins.reduce((s, c) => s + Number(c.value || 0), 0);
@@ -254,7 +278,10 @@ async function viewAddress(addr) {
     ['Unspent outputs', num(coins.length)],
     ['Transactions seen', num(txs.length)],
   ];
-  const rows = txs.slice(0, 200).sort((a, b) => (b.height || 0) - (a.height || 0)).map(tx => `<tr>
+  // Newest first; unconfirmed transactions have height -1 and go on top.
+  const rank = tx => (tx.height == null || tx.height < 0 ? Infinity : tx.height);
+  const newest = [...txs].sort((a, b) => (rank(b) === rank(a) ? 0 : rank(b) > rank(a) ? 1 : -1));
+  const rows = newest.slice(0, 200).map(tx => `<tr>
     <td class="mono">${link(`#/tx/${tx.hash}`, shorten(tx.hash, 12))}</td>
     <td>${tx.height != null && tx.height >= 0 ? link(`#/block/${tx.height}`, num(tx.height)) : 'unconfirmed'}</td>
     <td>${when(tx.time || tx.mtime)}</td>
@@ -263,7 +290,7 @@ async function viewAddress(addr) {
   setView(`<h1 class="page-title">Address<span class="pill">  ·  address</span></h1>
     ${kv(pairs)}
     <p class="hint">Balance and history come from hsd's address index, which your Bob node keeps enabled.</p>
-    <h2>Transactions${txs.length > 200 ? ' (first 200)' : ''}</h2>
+    <h2>Transactions${txs.length > 200 ? ' (newest 200)' : ''}</h2>
     <div class="panel"><table>
       <thead><tr><th>Txid</th><th>Block</th><th>Time</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="3" class="muted">No transactions for this address.</td></tr>'}</tbody>
@@ -273,9 +300,9 @@ async function viewAddress(addr) {
 // A 64-hex value: resolve to a tx, else a block.
 async function viewSearchHash(hash) {
   loading('Resolving…');
-  const tx = await rest(`tx/${hash}`).catch(() => null);
+  const tx = await rest(`tx/${hash}`);
   if (tx) { location.hash = `#/tx/${hash}`; return; }
-  const block = await rest(`block/${hash}`).catch(() => null);
+  const block = await rest(`block/${hash}`);
   if (block) { location.hash = `#/block/${hash}`; return; }
   showError(`Nothing found for ${hash} (not a known transaction or block).`);
 }
@@ -297,7 +324,7 @@ async function route() {
       default: return await viewHome();
     }
   } catch (e) {
-    showError(String(e && e.message || e));
+    showError(isSpvError(e) ? SPV_NOTICE : String(e && e.message || e));
   }
 }
 

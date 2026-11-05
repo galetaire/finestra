@@ -43,9 +43,10 @@ See `docker/web/node-proxy.js` in the
 
 ## Requirements
 
-- The **Bob DNS** app, version `2.3.19-web.3` or later (the release that adds the
-  read-only node proxy). Finestra declares it as a dependency.
-- A reasonably synced node (SPV mode will not have full chain/address data).
+- The **Bob DNS** app, version `2.3.19-web.4` or later. Finestra declares it as
+  a dependency.
+- Bob in full-node mode, which is not its default. In SPV mode only name lookups
+  work, and Finestra says so.
 
 ## Install
 

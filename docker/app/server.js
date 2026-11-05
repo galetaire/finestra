@@ -24,14 +24,14 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const ALLOWED_RPC = new Set([
   'getinfo', 'getblockchaininfo', 'getnetworkinfo', 'getmininginfo',
   'getblockcount', 'getbestblockhash', 'getdifficulty', 'getconnectioncount',
-  'getnetworkhashps', 'uptime',
+  'getnetworkhashps',
   'getblock', 'getblockbyheight', 'getblockheader', 'getblockhash',
-  'getchaintips', 'getentropy',
+  'getchaintips',
   'getrawtransaction', 'gettxout', 'gettxoutproof', 'verifytxoutproof',
   'decoderawtransaction', 'decodescript',
   'getmempoolinfo', 'getrawmempool', 'getmempoolentry', 'estimatefee',
   'estimatesmartfee', 'estimatepriority',
-  'getnameinfo', 'getnameresource', 'getnamebyhash', 'getnames',
+  'getnameinfo', 'getnameresource', 'getnamebyhash',
   'getnameproof', 'getdnssecproof',
   'validateaddress',
 ]);
