@@ -1,0 +1,42 @@
+manifestVersion: 1
+id: finestra-explorer
+name: Finestra
+tagline: A read-only Handshake explorer for your own node
+icon: https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/icon.png
+category: crypto
+version: "0.1.0"
+port: 8338
+description: >-
+  Finestra is a simple block explorer for the Handshake (HNS) network that runs
+  entirely on your Umbrel and reads its data from your own node — the Bob DNS
+  app — so nothing leaves your machine.
+
+
+  Look up Handshake names and their auction state and DNS records, browse the
+  latest blocks, and inspect transactions and addresses. Address balances and
+  history work because Bob keeps its node's address and transaction indexes
+  enabled.
+
+
+  Finestra is read-only. It talks to Bob through a scoped, read-only node
+  connection that Bob exposes to it on your Umbrel's internal network; it can
+  never reach your wallet, move funds, or change anything. This app requires the
+  Bob DNS app and a reasonably synced node to be useful.
+developer: galetaire
+website: https://github.com/galetaire/finestra
+submitter: galetaire
+submission: https://github.com/galetaire/finestra
+repo: https://github.com/galetaire/finestra
+support: https://github.com/galetaire/finestra/issues
+gallery:
+  - https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/gallery/1.png
+  - https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/gallery/2.png
+  - https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/gallery/3.png
+releaseNotes: >-
+  First release: names and auctions, latest blocks, transaction and address
+  lookups, all read-only from your Bob DNS node.
+dependencies:
+  - bob-wallet
+path: ""
+defaultUsername: ""
+defaultPassword: ""

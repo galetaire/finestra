@@ -1,0 +1,19 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # The format here is: <app-id>_<docker-service-name>_1
+      APP_HOST: finestra-explorer_server_1
+      APP_PORT: 3000
+
+  server:
+    image: ghcr.io/galetaire/finestra:0.1.0
+    restart: on-failure
+    environment:
+      - TZ=Etc/UTC
+      # Bob DNS exposes a scoped, read-only slice of its Handshake node here.
+      # This hostname is <bob-app-id>_<service>_1 on Umbrel's Docker network.
+      # Bob only accepts the container named finestra-explorer_server_1, so the
+      # two app ids must stay in sync (see NODE_PROXY_ALLOWED_HOSTS in Bob).
+      - BOB_NODE_PROXY_URL=http://bob-wallet_server_1:3100

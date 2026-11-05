@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Finestra — Handshake explorer</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/" aria-label="Finestra home">
+      <span class="brand-mark">🪟</span>
+      <span class="brand-name">Finestra</span>
+    </a>
+    <form id="search-form" class="search" role="search">
+      <input id="search-input" type="text" autocomplete="off" spellcheck="false"
+        placeholder="Search a name, block height/hash, txid or hs1… address" />
+      <button type="submit" aria-label="Search">Search</button>
+    </form>
+    <div id="node-chip" class="chip" title="Node status">…</div>
+  </header>
+
+  <main id="view" class="view">
+    <div class="loading">Loading…</div>
+  </main>
+
+  <footer class="footer">
+    <span>Finestra · read-only Handshake explorer</span>
+    <span>Data from your <strong>Bob DNS</strong> node on Umbrel</span>
+  </footer>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>

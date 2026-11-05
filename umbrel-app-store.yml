@@ -1,0 +1,2 @@
+id: "finestra" # Prefix for every app in this store (a-z and dashes only).
+name: "Finestra" # Shows up in umbrelOS as "Finestra App Store".
