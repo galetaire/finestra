@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Finestra — Handshake explorer</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <script src="./theme.js"></script>
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
@@ -19,6 +20,15 @@
       <button type="submit" aria-label="Search">Search</button>
     </form>
     <div id="node-chip" class="chip" title="Node status">…</div>
+    <button id="theme-toggle" class="theme-toggle" type="button">
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="4.5" />
+        <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" />
+      </svg>
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z" />
+      </svg>
+    </button>
   </header>
 
   <main id="view" class="view">
