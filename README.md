@@ -46,7 +46,7 @@ See `docker/web/node-proxy.js` in the
 - The **Bob DNS** app, version `2.3.19-web.4` or later. Finestra declares it as
   a dependency.
 - Bob in full-node mode, which is not its default. In SPV mode only name lookups
-  work, and Finestra says so.
+  work, and only once Bob has finished syncing. Finestra says so.
 
 ## Install
 

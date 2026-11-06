@@ -38,9 +38,22 @@ async function rest(pathname) {
 
 const isSpvError = e => /spv mode/i.test(String(e && e.message));
 const SPV_NOTICE = 'Your Bob node is in SPV mode, so it does not store blocks, ' +
-  'transactions or address history. Name lookups still work. Switch Bob to ' +
-  'full-node mode and let it sync to use the rest of Finestra.';
+  'transactions or address history. Name lookups work once it has finished ' +
+  'syncing. Switch Bob to full-node mode and let it sync to use the rest of Finestra.';
+const SPV_SYNCING = 'Your Bob node is in SPV mode and still syncing. It can only ' +
+  'look up names once it has finished, so this name\'s status is not known yet.';
 const notice = text => `<div class="error">${esc(text)}</div>`;
+
+// hsd's normal name lookups always come back empty in SPV mode, which would make
+// every registered name look unregistered. Its "safe" option asks peers instead.
+async function nodeIsSpv() {
+  try {
+    await rest('block/0');
+    return false;
+  } catch (e) {
+    return isSpvError(e);
+  }
+}
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -149,10 +162,16 @@ function stat(label, value) {
 
 async function viewName(name) {
   loading(`Looking up “${name}”…`);
+  const [spv, chain] = await Promise.all([nodeIsSpv(), rpc('getblockchaininfo').catch(() => null)]);
+  const params = spv ? [name, true] : [name];
+  const behind = chain && chain.verificationprogress < 0.9999;
   let info, resource;
-  try { info = await rpc('getnameinfo', [name]); }
-  catch (e) { return showError(`Could not look up name: ${e.message}`); }
-  try { resource = await rpc('getnameresource', [name]); } catch (e) { resource = null; }
+  try { info = await rpc('getnameinfo', params); }
+  catch (e) {
+    if (/not synced/i.test(e.message)) return showError(SPV_SYNCING);
+    return showError(`Could not look up name: ${e.message}`);
+  }
+  try { resource = await rpc('getnameresource', params); } catch (e) { resource = null; }
 
   const ni = (info && info.info) || null;
   const state = ni && ni.state ? ni.state : 'UNREGISTERED';
@@ -183,6 +202,7 @@ async function viewName(name) {
   }
 
   setView(`<h1 class="page-title">${esc(name)}<span class="pill">  ·  name</span></h1>
+    ${behind ? notice('Your Bob node is still syncing, so this information may be out of date. A registered name can show as unregistered until the sync finishes.') : ''}
     ${kv(pairs)}
     <h2>DNS records</h2>${records}
     <h2>Auction detail</h2>${json(info)}
