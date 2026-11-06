@@ -4,7 +4,7 @@ name: Finestra
 tagline: A read-only Handshake explorer for your own node
 icon: https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/icon.png
 category: crypto
-version: "0.1.3"
+version: "0.2.0"
 port: 8338
 description: >-
   Finestra is a simple block explorer for the Handshake (HNS) network that runs
@@ -33,8 +33,9 @@ gallery:
   - https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/gallery/2.png
   - https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/gallery/3.png
 releaseNotes: >-
-  Adds a light mode. Finestra follows your system setting until you pick a
-  theme with the new toggle in the top bar.
+  A new look and much more data: a live dashboard with network stats and
+  recent name activity, plus new Blocks and Mempool pages. Name, block,
+  transaction and address pages now show far more detail.
 dependencies:
   - bob-wallet
 path: ""

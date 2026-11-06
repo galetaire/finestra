@@ -4,31 +4,43 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Finestra — Handshake explorer</title>
-  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="icon" type="image/png" href="./logo.png" />
   <script src="./theme.js"></script>
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#/" aria-label="Finestra home">
-      <span class="brand-mark">🪟</span>
-      <span class="brand-name">Finestra</span>
-    </a>
+    <div class="topbar-row">
+      <a class="brand" href="#/" aria-label="Finestra home">
+        <img class="brand-mark" src="./logo.png" alt="" width="30" height="30" />
+        <span class="brand-name">Finestra</span>
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="#/" data-nav="">Dashboard</a>
+        <a href="#/blocks" data-nav="blocks">Blocks</a>
+        <a href="#/mempool" data-nav="mempool">Mempool</a>
+      </nav>
+      <div class="topbar-end">
+        <div id="node-chip" class="chip" title="Node status">…</div>
+        <button id="theme-toggle" class="theme-toggle" type="button">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.5" />
+            <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" />
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z" />
+          </svg>
+        </button>
+      </div>
+    </div>
     <form id="search-form" class="search" role="search">
-      <input id="search-input" type="text" autocomplete="off" spellcheck="false"
-        placeholder="Search a name, block height/hash, txid or hs1… address" />
-      <button type="submit" aria-label="Search">Search</button>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" />
+        <path d="M20 20l-3.8-3.8" />
+      </svg>
+      <input id="search-input" type="text" autocomplete="off" spellcheck="false" aria-label="Search"
+        placeholder="Search for a name, block height or hash, transaction, or address" />
     </form>
-    <div id="node-chip" class="chip" title="Node status">…</div>
-    <button id="theme-toggle" class="theme-toggle" type="button">
-      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="4.5" />
-        <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" />
-      </svg>
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z" />
-      </svg>
-    </button>
   </header>
 
   <main id="view" class="view">
@@ -37,7 +49,7 @@
 
   <footer class="footer">
     <span>Finestra · read-only Handshake explorer</span>
-    <span>Data from your <strong>Bob DNS</strong> node on Umbrel</span>
+    <span id="footer-node">Data from your <strong>Bob DNS</strong> node on Umbrel</span>
   </footer>
 
   <script src="./app.js" defer></script>

@@ -6,15 +6,27 @@ node** — the [Bob DNS](https://github.com/galetaire/bob-umbrel) app — over y
 Umbrel's internal network. Nothing leaves your machine, and there is no second
 blockchain to sync.
 
-Look up:
+What it shows:
 
+- **Dashboard** — time since the last block, mempool, hashrate, difficulty, next
+  tree update, supply and burned coins, peers, latest blocks and recent name
+  activity. It refreshes by itself.
 - **Names & auctions** — auction state (OPENING / BIDDING / REVEAL / CLOSED),
-  highest bid, owner, and the DNS records published on a name.
-- **Blocks** — latest blocks, and any block by height or hash.
-- **Transactions** — inputs, outputs, values, and Handshake covenants
-  (OPEN / BID / REVEAL / REGISTER / UPDATE / TRANSFER …).
-- **Addresses** — balance and transaction history (Bob runs its node with the
-  address and transaction indexes enabled, so this works out of the box).
+  owner, highest bid, price paid, renewal and expiry countdowns, and the DNS
+  records published on a name.
+- **Blocks** — every block, with transactions, inputs, outputs, size, fees,
+  miner reward and name activity.
+- **Mempool** — pending transactions, their size and fees.
+- **Transactions** — inputs, outputs, values, fees, and Handshake covenants
+  (OPEN / BID / REVEAL / REGISTER / UPDATE / TRANSFER …) with their names.
+- **Addresses** — balance, coins locked in names, names held, and transaction
+  history (Bob runs its node with the address and transaction indexes enabled,
+  so this works out of the box).
+
+Some figures other explorers show need an index of the whole chain, so Finestra
+doesn't have them: total names, total addresses, locked coins, and auction
+rankings such as "ending soon". Prices would mean calling an outside service,
+so there are none.
 
 ## How it works
 
@@ -68,7 +80,8 @@ finestra-explorer/
 docker/
   Dockerfile                      # tiny Node image, no third-party deps
   app/
-    server.js                     # serves the UI + forwards /api/* to Bob's proxy
+    server.js                     # serves the UI, forwards /api/* to Bob's proxy,
+                                  # and gathers and caches dashboard data
     public/                       # the explorer UI (vanilla JS, no build step)
 .github/workflows/build-image.yml # builds ghcr.io/galetaire/finestra on push to main
 ```

@@ -1,11 +1,12 @@
 'use strict';
 
-// Finestra explorer UI. Talks only to this app's own /api, which forwards to
+// Finestra explorer UI. Talks only to this app's own /api, which reads from
 // Bob's read-only node proxy. All data is read-only.
 
 const view = document.getElementById('view');
 const nodeChip = document.getElementById('node-chip');
 const DOOS = 1e6; // 1 HNS = 1,000,000 dollarydoos
+const REFRESH_MS = 20000;
 
 // ---- api -------------------------------------------------------------------
 
@@ -36,13 +37,20 @@ async function rest(pathname) {
   return data;
 }
 
-const isSpvError = e => /spv mode/i.test(String(e && e.message));
+async function api(pathname) {
+  const r = await fetch(`/api/${pathname}`);
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(errorText(data, `Request failed (${r.status})`));
+  return data;
+}
+
+const isSpvError = e => /spv mode|no mempool available/i.test(String(e && e.message));
 const SPV_NOTICE = 'Your Bob node is in SPV mode, so it does not store blocks, ' +
   'transactions or address history. Name lookups work once it has finished ' +
   'syncing. Switch Bob to full-node mode and let it sync to use the rest of Finestra.';
 const SPV_SYNCING = 'Your Bob node is in SPV mode and still syncing. It can only ' +
   'look up names once it has finished, so this name\'s status is not known yet.';
-const notice = text => `<div class="error">${esc(text)}</div>`;
+const notice = text => `<div class="notice">${esc(text)}</div>`;
 
 // hsd's normal name lookups always come back empty in SPV mode, which would make
 // every registered name look unregistered. Its "safe" option asks peers instead.
@@ -55,16 +63,66 @@ async function nodeIsSpv() {
   }
 }
 
-// ---- helpers ---------------------------------------------------------------
+// ---- formatting ------------------------------------------------------------
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => (
   {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
-const hns = doos => (Number(doos || 0) / DOOS).toLocaleString(undefined, {maximumFractionDigits: 6}) + ' HNS';
+const hns = (doos, digits = 6) => (Number(doos || 0) / DOOS)
+  .toLocaleString(undefined, {maximumFractionDigits: digits}) + ' HNS';
 const num = n => Number(n || 0).toLocaleString();
 const shorten = (s, n = 10) => !s ? '' : (s.length <= n * 2 + 1 ? s : `${s.slice(0, n)}…${s.slice(-n)}`);
 const when = t => t ? new Date(t * 1000).toLocaleString() : '—';
 const link = (href, text, cls) => `<a href="${href}"${cls ? ` class="${cls}"` : ''}>${esc(text)}</a>`;
+const nameLink = name => link(`#/name/${encodeURIComponent(name)}`, name);
+const blockLink = height => link(`#/block/${height}`, num(height));
+const txLink = (hash, n = 10) => link(`#/tx/${hash}`, shorten(hash, n), 'mono');
+const addressLink = (address, n = 10) => link(`#/address/${address}`, shorten(address, n), 'mono');
+
+function bytes(n) {
+  if (n == null) return '—';
+  if (n < 1000) return `${n} B`;
+  if (n < 1e6) return `${(n / 1e3).toFixed(2)} kB`;
+  return `${(n / 1e6).toFixed(2)} MB`;
+}
+
+function scaled(n, units) {
+  if (n == null) return '—';
+  let value = n;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit++;
+  }
+  return `${value.toLocaleString(undefined, {maximumFractionDigits: 2})} ${units[unit]}`.trim();
+}
+const hashrate = n => scaled(n, ['H/s', 'kH/s', 'MH/s', 'GH/s', 'TH/s', 'PH/s', 'EH/s']);
+const compact = n => scaled(n, ['', 'k', 'M', 'G', 'T', 'P']);
+
+function ago(t) {
+  if (!t) return '—';
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - t));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+const age = t => `<span data-age="${Number(t) || ''}" title="${esc(when(t))}">${esc(ago(t))}</span>`;
+
+function duration(s) {
+  if (s == null) return '—';
+  if (s < 60) return `${Math.round(s)}s`;
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
+const badge = text => `<span class="badge ${esc(text)}">${esc(text)}</span>`;
+
+// ---- building blocks -------------------------------------------------------
+
+function stat(label, value, sub, extra = '') {
+  return `<div class="stat"><div class="label">${esc(label)}</div>
+    <div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}${extra}</div>`;
+}
 
 function kv(pairs) {
   return `<div class="panel"><div class="kv">${
@@ -72,13 +130,40 @@ function kv(pairs) {
   }</div></div>`;
 }
 
-function json(obj) {
-  return `<pre class="json">${esc(JSON.stringify(obj, null, 2))}</pre>`;
+function table(head, rows, empty) {
+  const cols = head.map(h => (h.startsWith('>')
+    ? `<th class="right">${esc(h.slice(1))}</th>` : `<th>${esc(h)}</th>`)).join('');
+  return `<div class="panel scroll"><table><thead><tr>${cols}</tr></thead><tbody>${
+    rows.join('') || `<tr><td colspan="${head.length}" class="muted">${esc(empty)}</td></tr>`
+  }</tbody></table></div>`;
 }
 
-function setView(html) { view.innerHTML = html; window.scrollTo(0, 0); }
+const raw = (title, obj) => `<details class="raw"><summary>${esc(title)}</summary>
+  <pre class="json">${esc(JSON.stringify(obj, null, 2))}</pre></details>`;
+
+function setView(html, keepScroll) {
+  view.innerHTML = html;
+  if (!keepScroll) window.scrollTo(0, 0);
+}
 function showError(msg) { setView(`<div class="error">${esc(msg)}</div>`); }
 function loading(label) { setView(`<div class="loading">${esc(label || 'Loading…')}</div>`); }
+
+function blockRows(blocks) {
+  return blocks.map(b => `<tr>
+    <td>${blockLink(b.height)}</td>
+    <td class="nowrap">${age(b.time)}</td>
+    <td class="right">${num(b.txs)}</td>
+    <td class="right hide-small">${num(b.inputs)}</td>
+    <td class="right hide-small">${num(b.outputs)}</td>
+    <td class="right nowrap">${bytes(b.size)}</td>
+    <td class="right nowrap hide-small">${hns(b.fees, 2)}</td>
+  </tr>`);
+}
+const BLOCK_HEAD = ['Height', 'Time', '>Txs', '>Inputs', '>Outputs', '>Size', '>Fees'];
+function blockTable(blocks, empty) {
+  return table(BLOCK_HEAD, blockRows(blocks), empty).replace(
+    /<th class="right">(Inputs|Outputs|Fees)<\/th>/g, '<th class="right hide-small">$1</th>');
+}
 
 // ---- node status chip ------------------------------------------------------
 
@@ -88,17 +173,17 @@ async function refreshNodeChip() {
     const syncing = info.verificationprogress != null && info.verificationprogress < 0.9999;
     nodeChip.className = 'chip ok';
     nodeChip.textContent = syncing
-      ? `syncing ${(info.verificationprogress * 100).toFixed(2)}% · ${num(info.blocks)}`
-      : `synced · height ${num(info.blocks)}`;
-    nodeChip.title = `chain: ${info.chain || 'main'}`;
+      ? `Syncing ${(info.verificationprogress * 100).toFixed(2)}% · ${num(info.blocks)}`
+      : `Synced · ${num(info.blocks)}`;
+    nodeChip.title = `Network: ${info.chain || 'main'}`;
   } catch (e) {
     nodeChip.className = 'chip bad';
-    nodeChip.textContent = 'node unreachable';
+    nodeChip.textContent = 'Node unreachable';
     nodeChip.title = String(e.message || e);
   }
 }
 
-// ---- search classification -------------------------------------------------
+// ---- search ----------------------------------------------------------------
 
 function classify(q) {
   const s = q.trim();
@@ -118,46 +203,117 @@ function go(q) {
   else location.hash = `#/search/${c.id}`; // 64-hex: resolve tx-or-block
 }
 
-// ---- views -----------------------------------------------------------------
+// ---- dashboard -------------------------------------------------------------
 
-async function viewHome() {
-  loading('Loading chain…');
-  const info = await rpc('getblockchaininfo');
-  const height = info.blocks;
-  const want = 10;
-  const heights = [];
-  for (let h = height; h > Math.max(-1, height - want); h--) heights.push(h);
-  let spv = false;
-  const blocks = await Promise.all(heights.map(h => rest(`block/${h}`).catch(e => {
-    if (isSpvError(e)) spv = true;
-    return null;
-  })));
+const isHome = () => !location.hash.replace(/^#\/?/, '');
 
-  const stats = `<div class="grid">
-    ${stat('Chain', esc(info.chain || 'main'))}
-    ${stat('Height', num(info.blocks))}
-    ${stat('Progress', info.verificationprogress != null ? (info.verificationprogress * 100).toFixed(2) + '%' : '—')}
-    ${stat('Difficulty', info.difficulty != null ? num(Math.round(info.difficulty)) : '—')}
+async function viewHome(quiet) {
+  if (!quiet) loading('Loading dashboard…');
+  const o = await api('overview');
+  if (!isHome()) return;
+
+  const last = o.blocks[0];
+  const syncing = o.progress < 0.9999;
+  const overview = `<div class="grid">
+    ${stat('Time since last block', last ? age(last.time).replace(/ ago/, '') : '—', last ? `Block ${num(last.height)}` : '')}
+    ${stat('Mempool', o.spv ? '—' : `${num(o.mempool.txs)} <small>pending</small>`, o.spv ? 'Not available in SPV mode' : bytes(o.mempool.bytes))}
+    ${stat('Hashrate', o.spv ? '—' : hashrate(o.hashrate), `Difficulty ${compact(o.difficulty)}`)}
+    ${stat('Next tree update', `Block ${num(o.nextTree.height)}`,
+      `In ${num(o.nextTree.blocks)} block${o.nextTree.blocks === 1 ? '' : 's'}${o.blockTime != null ? `, about ${duration(o.nextTree.blocks * o.blockTime)}` : ''}`)}
   </div>`;
 
-  const rows = blocks.filter(Boolean).map(b => `<tr>
-    <td>${link(`#/block/${b.height}`, num(b.height))}</td>
-    <td class="mono">${link(`#/block/${b.hash}`, shorten(b.hash, 8))}</td>
-    <td>${when(b.time)}</td>
-    <td class="right">${num((b.txs || []).length)}</td>
-  </tr>`).join('');
+  const issued = o.state.value + o.state.burned;
+  const supply = o.spv ? '' : `<h2>Network</h2><div class="grid compact">
+    ${stat('Blocks', num(o.height))}
+    ${stat('Transactions', num(o.state.tx))}
+    ${stat('Unspent outputs', num(o.state.coin))}
+    ${stat('Supply', hns(o.state.value, 0))}
+    ${stat('Issued', hns(issued, 0))}
+    ${stat('Burned', hns(o.state.burned, 0))}
+    ${stat('Peers', num(o.connections), `hsd ${esc(o.version)}`)}
+    ${stat('Block time', o.blockTime != null ? duration(o.blockTime) : '—', 'Last 10 blocks')}
+  </div>`;
 
-  setView(`<h1 class="page-title">Handshake explorer</h1>${spv ? notice(SPV_NOTICE) : ''}${stats}
-    <h2>Latest blocks</h2>
-    <div class="panel"><table>
-      <thead><tr><th>Height</th><th>Hash</th><th>Time</th><th class="right">Txs</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="4" class="muted">No blocks yet.</td></tr>'}</tbody>
-    </table></div>
-    <p class="hint">Search a name (e.g. <code>welcome</code>), a block height or hash, a txid, or an <code>hs1…</code> address.</p>`);
+  const activity = o.activity.map(a => `<li>
+    <span>${badge(a.action)}</span>
+    <span class="name">${a.name ? nameLink(a.name) : txLink(a.tx, 6)}</span>
+    <span class="muted nowrap">${age(a.time)}</span>
+  </li>`).join('');
+
+  setView(`
+    ${o.spv ? notice(SPV_NOTICE) : ''}
+    ${syncing && !o.spv ? notice(`Your node is still syncing (${(o.progress * 100).toFixed(2)}%), so these numbers are behind the network.`) : ''}
+    <h2>Overview</h2>
+    ${overview}
+    ${supply}
+    <div class="columns">
+      <div><h2>Latest blocks <a href="#/blocks">See more</a></h2>
+        ${blockTable(o.blocks, o.spv ? 'Not available in SPV mode.' : 'No blocks yet.')}</div>
+      <div><h2>Name activity</h2>
+        <div class="panel">${activity
+          ? `<ul class="activity">${activity}</ul>`
+          : `<div class="empty">No name activity in the latest blocks.</div>`}</div></div>
+    </div>`, quiet);
 }
 
-function stat(label, value) {
-  return `<div class="stat"><div class="label">${esc(label)}</div><div class="value">${value}</div></div>`;
+async function viewBlocks(from) {
+  loading('Loading blocks…');
+  const page = await api(`blocks${from ? `?from=${encodeURIComponent(from)}` : ''}`);
+  const older = page.start - page.pageSize;
+  const newer = Math.min(page.start + page.pageSize, page.tip);
+  setView(`<h1 class="page-title">Blocks</h1>
+    ${blockTable(page.blocks, 'No blocks found.')}
+    <div class="pager">
+      <span>${page.start < page.tip ? link(`#/blocks/${newer}`, '← Newer') : ''}</span>
+      <span>${older >= 0 ? link(`#/blocks/${older}`, 'Older →') : ''}</span>
+    </div>`);
+}
+
+async function viewMempool() {
+  loading('Loading mempool…');
+  const m = await api('mempool');
+  const rows = m.txs.map(tx => `<tr>
+    <td>${txLink(tx.hash)}</td>
+    <td class="nowrap">${age(tx.time)}</td>
+    <td class="right nowrap">${bytes(tx.size)}</td>
+    <td class="right nowrap">${hns(tx.fee * DOOS)}</td>
+  </tr>`);
+  const used = m.info.maxmempool ? (m.info.usage / m.info.maxmempool) * 100 : 0;
+  setView(`<h1 class="page-title">Mempool</h1>
+    <div class="grid">
+      ${stat('Pending transactions', num(m.info.size))}
+      ${stat('Size', bytes(m.info.bytes))}
+      ${stat('Memory used', `${used.toFixed(2)}%`, `of ${bytes(m.info.maxmempool)}`,
+        `<div class="meter"><span style="width:${Math.min(used, 100)}%"></span></div>`)}
+      ${stat('Minimum fee', `${m.info.mempoolminfee} <small>HNS/kB</small>`)}
+    </div>
+    <h2>Pending transactions${m.total > m.txs.length ? ` (newest ${m.txs.length} of ${num(m.total)})` : ''}</h2>
+    ${table(['Transaction', 'Seen', '>Size', '>Fee'], rows, 'The mempool is empty.')}`);
+}
+
+// ---- names -----------------------------------------------------------------
+
+const STAT_LABELS = {
+  openPeriodStart: 'Open period starts', openPeriodEnd: 'Open period ends',
+  blocksUntilBidding: 'Blocks until bidding', hoursUntilBidding: 'Hours until bidding',
+  bidPeriodStart: 'Bidding starts', bidPeriodEnd: 'Bidding ends',
+  blocksUntilReveal: 'Blocks until reveal', hoursUntilReveal: 'Hours until reveal',
+  revealPeriodStart: 'Reveal starts', revealPeriodEnd: 'Reveal ends',
+  blocksUntilClose: 'Blocks until close', hoursUntilClose: 'Hours until close',
+  renewalPeriodStart: 'Renewal period starts', renewalPeriodEnd: 'Renewal period ends',
+  blocksUntilExpire: 'Blocks until expiry', daysUntilExpire: 'Days until expiry',
+  revokePeriodStart: 'Revoke period starts', revokePeriodEnd: 'Revoke period ends',
+  blocksUntilValidFinalize: 'Blocks until transfer can finalize',
+  hoursUntilValidFinalize: 'Hours until transfer can finalize',
+  transferLockupStart: 'Transfer lockup starts', transferLockupEnd: 'Transfer lockup ends',
+  blocksUntilWeakUnlock: 'Blocks until unlock', hoursUntilWeakUnlock: 'Hours until unlock',
+};
+const statValue = (key, value) => (/Height|Start|End$/.test(key) ? blockLink(value) : num(value));
+
+function recordDetail(r) {
+  if (r.type === 'DS') return `${r.keyTag} ${r.algorithm} ${r.digestType} ${r.digest}`;
+  if (r.type === 'TXT') return `"${(r.txt || []).join(' ')}"`;
+  return [r.ns, r.address].filter(Boolean).join(' ');
 }
 
 async function viewName(name) {
@@ -174,107 +330,189 @@ async function viewName(name) {
   try { resource = await rpc('getnameresource', params); } catch (e) { resource = null; }
 
   const ni = (info && info.info) || null;
+  const start = info && info.start;
   const state = ni && ni.state ? ni.state : 'UNREGISTERED';
-  const pairs = [
-    ['Name', `<strong>${esc(name)}</strong>`],
-    ['State', `<span class="badge ${esc(state)}">${esc(state)}</span>`],
-  ];
+  let owner = null;
+  if (ni && ni.owner && ni.owner.hash && !spv && !/^0+$/.test(ni.owner.hash)) {
+    const tx = await rest(`tx/${ni.owner.hash}`).catch(() => null);
+    const out = tx && tx.outputs[ni.owner.index];
+    owner = out && out.address;
+  }
+
+  const pairs = [['Status', badge(state)]];
   if (ni) {
-    if (ni.height != null) pairs.push(['Auction open height', link(`#/block/${ni.height}`, num(ni.height))]);
-    if (ni.highest != null) pairs.push(['Highest bid', hns(ni.highest)]);
-    if (ni.value != null) pairs.push(['Paid / value', hns(ni.value)]);
-    if (ni.owner && ni.owner.hash) pairs.push(['Owner outpoint', `<span class="mono">${esc(shorten(ni.owner.hash, 8))}/${ni.owner.index}</span>`]);
-    if (ni.renewal != null) pairs.push(['Last renewal height', num(ni.renewal)]);
-    if (ni.expired != null) pairs.push(['Expired', ni.expired ? 'yes' : 'no']);
-    if (ni.registered != null) pairs.push(['Registered', ni.registered ? 'yes' : 'no']);
-    if (ni.weak != null) pairs.push(['Weak (reserved)', ni.weak ? 'yes' : 'no']);
+    if (owner) pairs.push(['Owner', addressLink(owner, 14)]);
+    pairs.push(['Auction opened', blockLink(ni.height)]);
+    pairs.push(['Highest bid', hns(ni.highest)]);
+    pairs.push(['Price paid', hns(ni.value)]);
+    pairs.push(['Last renewal', blockLink(ni.renewal)]);
+    pairs.push(['Renewals', num(ni.renewals)]);
+    if (ni.owner && ni.owner.hash && !/^0+$/.test(ni.owner.hash)) pairs.push(['Latest owner transaction', txLink(ni.owner.hash, 14)]);
+    if (ni.transfer) pairs.push(['Transfer started', blockLink(ni.transfer)]);
+    if (ni.revoked) pairs.push(['Revoked', blockLink(ni.revoked)]);
+    if (ni.claimed) pairs.push(['Claimed', 'Yes, as a reserved name']);
+    if (ni.weak) pairs.push(['Weak (claimed with a weak key)', 'Yes']);
+    for (const [key, value] of Object.entries(ni.stats || {})) {
+      if (value != null) pairs.push([STAT_LABELS[key] || key, statValue(key, value)]);
+    }
+  } else if (start) {
+    pairs.push(['Reserved', start.reserved ? 'Yes' : 'No']);
+    pairs.push(['Available from block', blockLink(start.start)]);
   }
 
-  let records = '<p class="muted">No DNS records published.</p>';
-  if (resource && Array.isArray(resource.records) && resource.records.length) {
-    const detail = r => {
-      if (r.type === 'DS') return `${r.keyTag} ${r.algorithm} ${r.digestType} ${r.digest}`;
-      if (r.type === 'TXT') return `"${(r.txt || []).join(' ')}"`;
-      return [r.ns, r.address].filter(Boolean).join(' ');
-    };
-    records = `<ul class="records mono">${resource.records.map(r =>
-      `<li>${esc(r.type)} ${esc(detail(r))}</li>`).join('')}</ul>`;
-  }
+  const records = resource && Array.isArray(resource.records) ? resource.records : [];
+  const recordRows = records.map(r => `<tr><td class="nowrap">${esc(r.type)}</td><td>${esc(recordDetail(r))}</td></tr>`);
 
-  setView(`<h1 class="page-title">${esc(name)}<span class="pill">  ·  name</span></h1>
+  setView(`<h1 class="page-title">${esc(name)} <small>Handshake name</small></h1>
     ${behind ? notice('Your Bob node is still syncing, so this information may be out of date. A registered name can show as unregistered until the sync finishes.') : ''}
     ${kv(pairs)}
-    <h2>DNS records</h2>${records}
-    <h2>Auction detail</h2>${json(info)}
-    ${resource ? `<h2>Resource</h2>${json(resource)}` : ''}`);
+    <h2>DNS records</h2>
+    ${records.length
+      ? `<div class="panel scroll records"><table><tbody>${recordRows.join('')}</tbody></table></div>`
+      : '<div class="panel"><div class="empty">No DNS records published.</div></div>'}
+    ${raw('Raw name data', {info, resource})}`);
+}
+
+// ---- blocks ----------------------------------------------------------------
+
+function covenantBadges(txs) {
+  const counts = {};
+  for (const tx of txs) {
+    for (const out of tx.outputs) {
+      const action = out.covenant && out.covenant.action;
+      if (action && action !== 'NONE') counts[action] = (counts[action] || 0) + 1;
+    }
+  }
+  const items = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  return items.length
+    ? `<div class="badges">${items.map(([a, n]) => `<span class="badge ${esc(a)}">${esc(a)} ${num(n)}</span>`).join('')}</div>`
+    : '<span class="muted">None</span>';
+}
+
+function outputCovenants(tx) {
+  const actions = [...new Set(tx.outputs.map(o => o.covenant && o.covenant.action))]
+    .filter(a => a && a !== 'NONE');
+  return actions.map(badge).join(' ');
 }
 
 async function viewBlock(id) {
   loading('Loading block…');
   const b = await rest(`block/${id}`);
   if (!b) return showError(`Block not found: ${id}`);
+  const stats = await rpc('getblockbyheight', [b.height, true, false]).catch(() => null);
   const txs = b.txs || [];
+  const fees = txs.reduce((s, tx) => s + (tx.fee || 0), 0);
+  const coinbase = txs[0];
+  const miner = coinbase && coinbase.outputs[0];
+  const next = stats && stats.nextblockhash;
+
   const pairs = [
-    ['Height', num(b.height)],
     ['Hash', `<span class="mono">${esc(b.hash)}</span>`],
-    ['Time', when(b.time)],
+    ['Time', `${esc(when(b.time))} (${age(b.time)})`],
+    ['Confirmations', num(b.depth)],
     ['Transactions', num(txs.length)],
-    ['Previous', b.prevBlock ? link(`#/block/${b.prevBlock}`, shorten(b.prevBlock, 10)) : '—'],
-    ['Merkle root', `<span class="mono">${esc(shorten(b.merkleRoot, 12))}</span>`],
-    ['Version', num(b.version)],
-    ['Bits', esc(b.bits)],
-    ['Nonce', num(b.nonce)],
+    ['Name activity', covenantBadges(txs)],
+    ['Miner reward', miner ? hns(miner.value) : '—'],
+    ['Fees', hns(fees)],
+    ['Mined to', miner && miner.address ? addressLink(miner.address, 14) : '—'],
   ];
-  const rows = txs.slice(0, 200).map((tx, i) => {
-    const hash = typeof tx === 'string' ? tx : tx.hash;
-    return `<tr><td class="right muted">${i}</td><td class="mono">${link(`#/tx/${hash}`, shorten(hash, 12))}</td></tr>`;
-  }).join('');
-  setView(`<h1 class="page-title">Block ${num(b.height)}<span class="pill">  ·  block</span></h1>
+  if (stats) {
+    pairs.push(['Size', bytes(stats.size)], ['Weight', num(stats.weight)], ['Difficulty', compact(stats.difficulty)]);
+  }
+  pairs.push(
+    ['Merkle root', `<span class="mono">${esc(b.merkleRoot)}</span>`],
+    ['Tree root', `<span class="mono">${esc(b.treeRoot)}</span>`],
+    ['Bits / nonce', `${esc(b.bits)} / ${num(b.nonce)}`],
+    ['Version', num(b.version)],
+  );
+
+  const rows = txs.slice(0, 200).map((tx, i) => `<tr>
+    <td class="right muted">${i}</td>
+    <td>${txLink(tx.hash)}</td>
+    <td>${i === 0 ? '<span class="badge">COINBASE</span>' : outputCovenants(tx)}</td>
+    <td class="right">${num(tx.inputs.length)}</td>
+    <td class="right">${num(tx.outputs.length)}</td>
+    <td class="right nowrap">${hns(tx.fee)}</td>
+  </tr>`);
+
+  setView(`<h1 class="page-title">Block ${num(b.height)}</h1>
     ${kv(pairs)}
+    <div class="pager">
+      <span>${b.height > 0 ? link(`#/block/${b.height - 1}`, '← Previous') : ''}</span>
+      <span>${next ? link(`#/block/${b.height + 1}`, 'Next →') : ''}</span>
+    </div>
     <h2>Transactions${txs.length > 200 ? ' (first 200)' : ''}</h2>
-    <div class="panel"><table><tbody>${rows || '<tr><td class="muted">None.</td></tr>'}</tbody></table></div>`);
+    ${table(['>#', 'Transaction', 'Activity', '>Inputs', '>Outputs', '>Fee'], rows, 'None.')}`);
 }
 
-function covenant(c) {
-  if (!c || c.action == null) return '';
-  const action = typeof c.action === 'string' ? c.action : `type ${c.type}`;
-  return action && action !== 'NONE' ? `<span class="badge ${esc(action)}">${esc(action)}</span> ` : '';
+// ---- transactions ----------------------------------------------------------
+
+async function namesFor(hashes) {
+  const names = {};
+  await Promise.all([...new Set(hashes)].slice(0, 25).map(async hash => {
+    names[hash] = await rpc('getnamebyhash', [hash]).catch(() => null);
+  }));
+  return names;
+}
+
+function covenantCell(c, names) {
+  if (!c || !c.action || c.action === 'NONE') return '';
+  const name = names[c.items[0]];
+  return `${badge(c.action)}${name ? ` ${nameLink(name)}` : ''}`;
 }
 
 async function viewTx(hash) {
   loading('Loading transaction…');
   const tx = await rest(`tx/${hash}`);
   if (!tx) return showError(`Transaction not found: ${hash}`);
+  const inputs = tx.inputs || [];
+  const outputs = tx.outputs || [];
+  const hashes = outputs.concat(inputs.map(i => i.coin).filter(Boolean))
+    .map(o => o.covenant).filter(c => c && c.action !== 'NONE').map(c => c.items[0]);
+  const names = await namesFor(hashes);
+  const confirmed = tx.height != null && tx.height >= 0;
+  const coinbase = inputs.length > 0 && /^0+$/.test(inputs[0].prevout.hash);
+  const total = outputs.reduce((s, o) => s + Number(o.value || 0), 0);
+
   const pairs = [
     ['Hash', `<span class="mono">${esc(tx.hash)}</span>`],
-    ['Block', tx.height != null && tx.height >= 0 ? link(`#/block/${tx.height}`, num(tx.height)) : 'unconfirmed'],
-    ['Time', when(tx.time || tx.mtime)],
-    ['Inputs', num((tx.inputs || []).length)],
-    ['Outputs', num((tx.outputs || []).length)],
+    ['Status', confirmed
+      ? `${num(tx.confirmations)} confirmation${tx.confirmations === 1 ? '' : 's'}`
+      : '<span class="badge BIDDING">UNCONFIRMED</span>'],
+    ['Block', confirmed ? blockLink(tx.height) : '—'],
+    ['Time', `${esc(when(tx.time || tx.mtime))} (${age(tx.time || tx.mtime)})`],
+    ['Total output', hns(total)],
+    ['Fee', hns(tx.fee)],
+    ['Fee rate', tx.rate != null ? `${hns(tx.rate)} / kB` : '—'],
+    ['Size', tx.hex ? bytes(tx.hex.length / 2) : '—'],
+    ['Version / locktime', `${num(tx.version)} / ${num(tx.locktime)}`],
   ];
-  const outRows = (tx.outputs || []).map((o, i) => `<tr>
+  const outRows = outputs.map((o, i) => `<tr>
     <td class="right muted">${i}</td>
-    <td>${covenant(o.covenant)}${o.address ? link(`#/address/${o.address}`, shorten(o.address, 10), 'mono') : '<span class="muted">—</span>'}</td>
-    <td class="right mono">${hns(o.value)}</td>
-  </tr>`).join('');
-  const inRows = (tx.inputs || []).map((inp, i) => {
-    const a = inp.coin && inp.coin.address;
-    const v = inp.coin && inp.coin.value;
+    <td>${o.address ? addressLink(o.address) : '<span class="muted">—</span>'}</td>
+    <td>${covenantCell(o.covenant, names)}</td>
+    <td class="right nowrap">${hns(o.value)}</td>
+  </tr>`);
+  const inRows = inputs.map((inp, i) => {
+    const c = inp.coin;
     return `<tr>
       <td class="right muted">${i}</td>
-      <td>${a ? link(`#/address/${a}`, shorten(a, 10), 'mono') : '<span class="muted">coinbase / unknown</span>'}</td>
-      <td class="right mono">${v != null ? hns(v) : '—'}</td>
+      <td>${coinbase ? '<span class="badge">COINBASE</span>'
+        : c && c.address ? addressLink(c.address) : '<span class="muted">Unknown</span>'}</td>
+      <td>${c ? covenantCell(c.covenant, names) : ''}</td>
+      <td class="right nowrap">${c && c.value != null ? hns(c.value) : '—'}</td>
     </tr>`;
-  }).join('');
-  setView(`<h1 class="page-title">Transaction<span class="pill">  ·  tx</span></h1>
+  });
+  const head = ['>#', 'Address', 'Activity', '>Value'];
+  setView(`<h1 class="page-title">Transaction</h1>
     ${kv(pairs)}
-    <h2>Inputs</h2><div class="panel"><table>
-      <thead><tr><th class="right">#</th><th>Address</th><th class="right">Value</th></tr></thead>
-      <tbody>${inRows || '<tr><td colspan="3" class="muted">None.</td></tr>'}</tbody></table></div>
-    <h2>Outputs</h2><div class="panel"><table>
-      <thead><tr><th class="right">#</th><th>Address / covenant</th><th class="right">Value</th></tr></thead>
-      <tbody>${outRows || '<tr><td colspan="3" class="muted">None.</td></tr>'}</tbody></table></div>`);
+    <h2>Inputs (${num(inputs.length)})</h2>${table(head, inRows, 'None.')}
+    <h2>Outputs (${num(outputs.length)})</h2>${table(head, outRows, 'None.')}`);
 }
+
+// ---- addresses -------------------------------------------------------------
+
+const HELD = new Set(['REGISTER', 'UPDATE', 'RENEW', 'TRANSFER', 'FINALIZE', 'CLAIM']);
 
 async function viewAddress(addr) {
   loading('Loading address…');
@@ -290,31 +528,35 @@ async function viewAddress(addr) {
   }
   txs = Array.isArray(txs) ? txs : [];
   coins = Array.isArray(coins) ? coins : [];
-  const balance = coins.reduce((s, c) => s + Number(c.value || 0), 0);
+  const sum = list => list.reduce((s, c) => s + Number(c.value || 0), 0);
+  const plain = coins.filter(c => !c.covenant || c.covenant.action === 'NONE');
+  const locked = coins.filter(c => c.covenant && c.covenant.action !== 'NONE');
+  const heldCoins = locked.filter(c => HELD.has(c.covenant.action));
+  const names = await namesFor(heldCoins.map(c => c.covenant.items[0]));
+  const held = [...new Set(Object.values(names).filter(Boolean))].sort();
 
-  const pairs = [
-    ['Address', `<span class="mono">${esc(addr)}</span>`],
-    ['Balance (unspent)', hns(balance)],
-    ['Unspent outputs', num(coins.length)],
-    ['Transactions seen', num(txs.length)],
-  ];
   // Newest first; unconfirmed transactions have height -1 and go on top.
   const rank = tx => (tx.height == null || tx.height < 0 ? Infinity : tx.height);
   const newest = [...txs].sort((a, b) => (rank(b) === rank(a) ? 0 : rank(b) > rank(a) ? 1 : -1));
   const rows = newest.slice(0, 200).map(tx => `<tr>
-    <td class="mono">${link(`#/tx/${tx.hash}`, shorten(tx.hash, 12))}</td>
-    <td>${tx.height != null && tx.height >= 0 ? link(`#/block/${tx.height}`, num(tx.height)) : 'unconfirmed'}</td>
-    <td>${when(tx.time || tx.mtime)}</td>
-  </tr>`).join('');
+    <td>${txLink(tx.hash, 12)}</td>
+    <td>${tx.height != null && tx.height >= 0 ? blockLink(tx.height) : '<span class="badge BIDDING">UNCONFIRMED</span>'}</td>
+    <td class="nowrap">${age(tx.time || tx.mtime)}</td>
+    <td>${outputCovenants(tx)}</td>
+  </tr>`);
 
-  setView(`<h1 class="page-title">Address<span class="pill">  ·  address</span></h1>
-    ${kv(pairs)}
-    <p class="hint">Balance and history come from hsd's address index, which your Bob node keeps enabled.</p>
+  setView(`<h1 class="page-title">Address</h1>
+    <p class="mono" style="overflow-wrap:anywhere;margin-top:-8px">${esc(addr)}</p>
+    <div class="grid">
+      ${stat('Balance', hns(sum(plain)), 'Spendable coins')}
+      ${stat('Locked in names', hns(sum(locked)), `${num(locked.length)} output${locked.length === 1 ? '' : 's'}`)}
+      ${stat('Transactions', num(txs.length))}
+      ${stat('Unspent outputs', num(coins.length))}
+    </div>
+    ${held.length ? `<h2>Names held (${num(held.length)})</h2>
+      <div class="panel"><div class="empty badges">${held.map(nameLink).join(' · ')}</div></div>` : ''}
     <h2>Transactions${txs.length > 200 ? ' (newest 200)' : ''}</h2>
-    <div class="panel"><table>
-      <thead><tr><th>Txid</th><th>Block</th><th>Time</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="3" class="muted">No transactions for this address.</td></tr>'}</tbody>
-    </table></div>`);
+    ${table(['Transaction', 'Block', 'Time', 'Activity'], rows, 'No transactions for this address.')}`);
 }
 
 // A 64-hex value: resolve to a tx, else a block.
@@ -329,13 +571,22 @@ async function viewSearchHash(hash) {
 
 // ---- router ----------------------------------------------------------------
 
+function markNav(kind) {
+  const section = kind === 'block' ? 'blocks' : kind || '';
+  for (const a of document.querySelectorAll('[data-nav]')) {
+    a.classList.toggle('active', a.dataset.nav === section);
+  }
+}
+
 async function route() {
   const hash = location.hash.replace(/^#\/?/, '');
-  const [kind, ...rest] = hash.split('/');
-  const arg = decodeURIComponent(rest.join('/') || '');
+  const [kind, ...parts] = hash.split('/');
+  const arg = decodeURIComponent(parts.join('/') || '');
+  markNav(kind);
   try {
     switch (kind) {
-      case '': case undefined: return await viewHome();
+      case 'blocks': return await viewBlocks(arg);
+      case 'mempool': return await viewMempool();
       case 'name': return await viewName(arg);
       case 'block': return await viewBlock(arg);
       case 'tx': return await viewTx(arg);
@@ -352,6 +603,7 @@ document.getElementById('search-form').addEventListener('submit', e => {
   e.preventDefault();
   const input = document.getElementById('search-input');
   go(input.value);
+  input.value = '';
   input.blur();
 });
 
@@ -359,3 +611,14 @@ window.addEventListener('hashchange', route);
 route();
 refreshNodeChip();
 setInterval(refreshNodeChip, 15000);
+setInterval(() => {
+  if (isHome() && !document.hidden) viewHome(true).catch(() => {});
+}, REFRESH_MS);
+setInterval(() => {
+  for (const el of document.querySelectorAll('[data-age]')) {
+    if (el.dataset.age) {
+      const text = ago(Number(el.dataset.age));
+      el.textContent = el.closest('.value') ? text.replace(/ ago/, '') : text;
+    }
+  }
+}, 1000);
