@@ -237,6 +237,19 @@ tbody tr:hover { background: var(--panel-2); }
 .activity li:first-child { border-top: none; }
 .activity .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; padding: 4px; background: var(--panel); border-radius: var(--radius); }
+.tab { flex: 1 1 auto; padding: 8px 14px; border-radius: 9px; color: var(--muted); font-weight: 700; text-align: center; }
+.tab span { font-weight: 500; }
+.tab:hover { color: var(--text); text-decoration: none; }
+.tab.active { background: var(--panel-2); color: var(--text); box-shadow: inset 0 -2px 0 var(--tab); }
+.filters { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; font-size: 14px; }
+.filters label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 700; }
+.filters select { padding: 6px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; }
+.stat.scan { margin-bottom: 12px; }
+button.sort { padding: 0; background: none; border: none; color: inherit; font: inherit; cursor: pointer; }
+button.sort:hover { color: var(--text); }
+button.sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pager button.sort { color: var(--accent); }
 .pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; }
 .notice, .error {
   margin-bottom: 14px;

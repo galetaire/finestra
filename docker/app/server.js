@@ -298,6 +298,165 @@ async function mempoolPage() {
   return {info, feeRate: fee ? fee.rate : null, total: txs.length, txs: txs.slice(0, 100)};
 }
 
+// ---- auctions ---------------------------------------------------------------
+//
+// A running auction can't be older than its open, bidding and reveal periods,
+// so reading that many blocks finds them all without indexing the whole chain.
+// The first read walks the window one block at a time, newest first, and only
+// starts when someone opens the page. After that only new blocks are read.
+// This is kept in memory, so it starts over when the app restarts.
+
+const AUCTION_PERIODS = {
+  main: {open: 37, bid: 720, reveal: 1440},
+  regtest: {open: 6, bid: 5, reveal: 10},
+};
+const SCAN_PAUSE_MS = 25;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const doos = hns => Math.round(hns * 1e6);
+
+const auctionScan = {
+  events: new Map(),
+  periods: null,
+  tip: 0,
+  low: 0,
+  running: false,
+  finished: false,
+  spv: false,
+  error: null,
+  version: 0,
+  list: null,
+  listVersion: -1,
+};
+
+async function scanAuctionBlock(height) {
+  const block = await nodeRpc('getblockbyheight', [height, true, true]);
+  const opens = [];
+  const bids = [];
+  const reveals = [];
+  for (const tx of block ? block.tx : []) {
+    for (const out of tx.vout) {
+      const covenant = out.covenant;
+      if (!covenant) continue;
+      const [nameHash, start, raw] = covenant.items;
+      if (covenant.action === 'OPEN') {
+        opens.push({nameHash, name: Buffer.from(raw, 'hex').toString('latin1')});
+      } else if (covenant.action === 'BID') {
+        bids.push({
+          nameHash,
+          name: Buffer.from(raw, 'hex').toString('latin1'),
+          start: Buffer.from(start, 'hex').readUInt32LE(0),
+          lockup: doos(out.value),
+        });
+      } else if (covenant.action === 'REVEAL') {
+        reveals.push({nameHash, start: Buffer.from(start, 'hex').readUInt32LE(0), bid: doos(out.value)});
+      }
+    }
+  }
+  auctionScan.events.set(height, {opens, bids, reveals});
+  auctionScan.version++;
+}
+
+async function runAuctionScan() {
+  const scan = auctionScan;
+  if (scan.running) return;
+  scan.running = true;
+  scan.error = null;
+  try {
+    // An SPV node has no blocks to read, which must not look like "no auctions".
+    await nodeRest('block/0');
+    const info = await nodeRest('');
+    const tip = info.chain.height;
+    const periods = AUCTION_PERIODS[info.network] || AUCTION_PERIODS.main;
+    const span = periods.open + periods.bid + periods.reveal;
+    const low = Math.max(1, tip - span + 1);
+    const moved = tip !== scan.tip;
+    scan.periods = periods;
+    scan.tip = tip;
+    scan.low = low;
+    for (const height of scan.events.keys()) {
+      if (height < low) scan.events.delete(height);
+    }
+    for (let height = tip; height >= low; height--) {
+      // The newest blocks can still be replaced, so they're read again.
+      const recheck = moved && tip - height < CACHE_DEPTH;
+      if (scan.events.has(height) && !recheck) continue;
+      await scanAuctionBlock(height);
+      await sleep(SCAN_PAUSE_MS);
+    }
+    scan.finished = true;
+    scan.spv = false;
+  } catch (e) {
+    if (/spv mode/i.test(e.message)) scan.spv = true;
+    else scan.error = e.message;
+  } finally {
+    scan.running = false;
+  }
+}
+
+function auctionPhase(auction, tip, periods) {
+  const bidding = auction.height + periods.open;
+  const reveal = bidding + periods.bid;
+  const closed = reveal + periods.reveal;
+  if (tip < bidding) return {phase: 'opening', end: bidding};
+  if (tip < reveal) return {phase: 'bidding', end: reveal};
+  if (tip < closed) return {phase: 'reveal', end: closed};
+  return null;
+}
+
+function auctionList() {
+  const scan = auctionScan;
+  if (scan.listVersion === scan.version && scan.list) return scan.list;
+  const found = new Map();
+  const auction = (nameHash, height) => {
+    const key = `${nameHash}:${height}`;
+    if (!found.has(key)) {
+      found.set(key, {height, name: null, bids: 0, highest: 0, total: 0, reveals: 0, highestBid: 0});
+    }
+    return found.get(key);
+  };
+  for (const [height, block] of scan.events) {
+    for (const open of block.opens) auction(open.nameHash, height).name = open.name;
+    for (const bid of block.bids) {
+      const a = auction(bid.nameHash, bid.start);
+      a.name = bid.name;
+      a.bids++;
+      a.total += bid.lockup;
+      a.highest = Math.max(a.highest, bid.lockup);
+    }
+    for (const reveal of block.reveals) {
+      const a = auction(reveal.nameHash, reveal.start);
+      a.reveals++;
+      a.highestBid = Math.max(a.highestBid, reveal.bid);
+    }
+  }
+  const list = [];
+  for (const a of found.values()) {
+    const stage = scan.periods && auctionPhase(a, scan.tip, scan.periods);
+    if (a.name && stage) list.push({...a, ...stage});
+  }
+  scan.list = list;
+  scan.listVersion = scan.version;
+  return list;
+}
+
+async function auctionsPage() {
+  const scan = auctionScan;
+  const tip = await nodeRest('').then(info => info.chain.height);
+  if (!scan.running && (!scan.finished || scan.spv || tip !== scan.tip)) runAuctionScan();
+  // Give a first scan a moment, so the first answer isn't always empty.
+  if (scan.running && !scan.events.size) await sleep(300);
+  const total = scan.periods ? scan.periods.open + scan.periods.bid + scan.periods.reveal : 0;
+  return {
+    tip: scan.tip,
+    spv: scan.spv,
+    error: scan.error,
+    finished: scan.finished,
+    scanned: scan.events.size,
+    total: scan.tip && total ? Math.min(total, scan.tip) : 0,
+    auctions: auctionList(),
+  };
+}
+
 function serveStatic(res, pathname) {
   // Default to index.html; the UI is a single page with client-side routing.
   const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
@@ -335,6 +494,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && pathname === '/api/overview') return sendJson(res, 200, await overview());
     if (req.method === 'GET' && pathname === '/api/mempool') return sendJson(res, 200, await mempoolPage());
+    if (req.method === 'GET' && pathname === '/api/auctions') return sendJson(res, 200, await auctionsPage());
     if (req.method === 'GET' && pathname === '/api/blocks') {
       const from = url.searchParams.get('from');
       return sendJson(res, 200, await blockPage(from === null ? undefined : Number(from)));

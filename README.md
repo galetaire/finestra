@@ -16,6 +16,8 @@ What it shows:
   records published on a name.
 - **Blocks** — every block, with transactions, inputs, outputs, size, fees,
   miner reward and name activity.
+- **Auction list** — every running auction, by stage (opening, bidding, reveal),
+  with bids, lockups and time left. Sort by any column, or filter by ASCII or IDN.
 - **Mempool** — pending transactions, their size and fees.
 - **Transactions** — inputs, outputs, values, fees, and Handshake covenants
   (OPEN / BID / REVEAL / REGISTER / UPDATE / TRANSFER …) with their names.
@@ -24,9 +26,12 @@ What it shows:
   so this works out of the box).
 
 Some figures other explorers show need an index of the whole chain, so Finestra
-doesn't have them: total names, total addresses, locked coins, and auction
-rankings such as "ending soon". Prices would mean calling an outside service,
-so there are none.
+doesn't have them: total names, total addresses, locked coins, and a list of
+closed auctions. Prices would mean calling an outside service, so there are none.
+
+Running auctions are different: one can't be older than about 15 days, so
+Finestra reads that many blocks when the Names page is first opened, then only
+new ones. This list is kept in memory, so it's read again after a restart.
 
 ## How it works
 

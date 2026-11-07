@@ -1,10 +1,10 @@
 manifestVersion: 1
 id: finestra-explorer
 name: Finestra
-tagline: A read-only Handshake explorer for your own node
+tagline: A read-only Handshake explorer for Bob DNS
 icon: https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/icon.png
 category: crypto
-version: "0.2.2"
+version: "0.3.0"
 port: 8338
 description: >-
   Finestra is a simple block explorer for the Handshake (HNS) network that runs
@@ -33,8 +33,8 @@ gallery:
   - https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/gallery/2.png
   - https://raw.githubusercontent.com/galetaire/finestra/main/finestra-explorer/gallery/3.png
 releaseNotes: >-
-  Emoji and other Unicode names now show their real form, like xn--53h2320o
-  (☕👾), and you can search for them by typing the emoji.
+  New Names page: browse every running auction by stage, with bids, lockups
+  and time left. The first visit reads recent blocks, which takes a few minutes.
 dependencies:
   - bob-wallet
 path: ""

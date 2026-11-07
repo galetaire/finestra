@@ -409,6 +409,172 @@ async function viewMempool() {
     ${table(['Transaction', 'Seen', '>Size', '>Fee'], rows, 'The mempool is empty.')}`);
 }
 
+// ---- auctions --------------------------------------------------------------
+
+const BLOCK_SECONDS = 600;
+const AUCTION_PAGE = 50;
+const AUCTION_TABS = [
+  ['opening', 'Opening', 'Bidding starts'],
+  ['bidding', 'Bidding', 'Bidding ends'],
+  ['reveal', 'Reveal', 'Reveal ends'],
+];
+const auctionView = {data: null, tab: 'bidding', key: 'end', dir: -1, type: 'any', page: 0};
+
+function timeLeft(blocks) {
+  const hours = (blocks * BLOCK_SECONDS) / 3600;
+  if (hours < 1) return `~${Math.max(1, Math.round(hours * 60))} minutes left`;
+  if (Math.round(hours) === 1) return '~1 hour left';
+  if (hours < 48) return `~${Math.round(hours)} hours left`;
+  return `~${Math.round(hours / 24)} days left`;
+}
+
+function nameLength(name) {
+  const unicode = unicodeName(name);
+  if (!unicode) return {sort: name.length, text: String(name.length)};
+  const shown = typeof Intl.Segmenter === 'function'
+    ? [...new Intl.Segmenter().segment(unicode)].length : [...unicode].length;
+  return {sort: shown, text: `${shown}/${name.length}`};
+}
+
+function sortButton(label, key, right) {
+  const active = auctionView.key === key;
+  const arrow = active ? (auctionView.dir > 0 ? ' ▲' : ' ▼') : '';
+  return `<th${right ? ' class="right"' : ''}><button class="sort" data-sort="${key}"
+    aria-sort="${active ? (auctionView.dir > 0 ? 'ascending' : 'descending') : 'none'}">${esc(label)}${arrow}</button></th>`;
+}
+
+function auctionRows(list, tab, tip) {
+  return list.map(a => {
+    const length = nameLength(a.name);
+    const end = `<span class="nowrap">${esc(timeLeft(a.end - tip))}</span>
+      <span class="muted nowrap">Block ${blockLink(a.end)}</span>`;
+    const dash = '<span class="muted">—</span>';
+    const money = n => (n ? `<span class="nowrap">${hns(n, 2)}</span>` : dash);
+    const cells = [`<td class="nowrap">${nameLink(a.name)}</td>`, `<td class="right">${esc(length.text)}</td>`];
+    if (tab !== 'opening') cells.push(`<td class="right">${num(a.bids)}</td>`);
+    if (tab === 'reveal') {
+      cells.push(`<td class="right">${num(a.reveals)}</td>`, `<td class="right">${money(a.highestBid)}</td>`);
+    }
+    if (tab !== 'opening') cells.push(`<td class="right">${money(a.highest)}</td>`);
+    if (tab === 'bidding') cells.push(`<td class="right">${money(a.total)}</td>`);
+    cells.push(`<td class="right">${end}</td>`);
+    return `<tr>${cells.join('')}</tr>`;
+  }).join('');
+}
+
+function renderAuctions(keepScroll) {
+  const {data, tab, key, dir, type, page} = auctionView;
+  const counts = Object.fromEntries(AUCTION_TABS.map(([id]) => [id, 0]));
+  for (const a of data.auctions) counts[a.phase]++;
+
+  const tabs = AUCTION_TABS.map(([id, label]) =>
+    `<a class="tab${id === tab ? ' active' : ''}" href="#/names/${id}">${label} <span>${num(counts[id])}</span></a>`).join('');
+
+  const matches = data.auctions
+    .filter(a => a.phase === tab)
+    .filter(a => type === 'any' || (type === 'idn') === Boolean(unicodeName(a.name)));
+  const value = a => (key === 'name' ? a.name : key === 'length' ? nameLength(a.name).sort : a[key]);
+  matches.sort((a, b) => {
+    const [x, y] = [value(a), value(b)];
+    return (x < y ? -1 : x > y ? 1 : 0) * dir || b.height - a.height;
+  });
+  const pages = Math.max(1, Math.ceil(matches.length / AUCTION_PAGE));
+  const current = Math.min(page, pages - 1);
+  const shown = matches.slice(current * AUCTION_PAGE, (current + 1) * AUCTION_PAGE);
+
+  const endLabel = AUCTION_TABS.find(([id]) => id === tab)[2];
+  const heads = [sortButton('Name', 'name'), sortButton('Length', 'length', true)];
+  if (tab !== 'opening') heads.push(sortButton('Bids', 'bids', true));
+  if (tab === 'reveal') heads.push(sortButton('Revealed', 'reveals', true), sortButton('Highest bid', 'highestBid', true));
+  if (tab !== 'opening') heads.push(sortButton('Highest lockup', 'highest', true));
+  if (tab === 'bidding') heads.push(sortButton('Total lockup', 'total', true));
+  heads.push(sortButton(endLabel, 'end', true));
+
+  const progress = data.finished ? '' : `<div class="stat scan">
+    <div class="label">Reading recent blocks for auctions</div>
+    <div class="sub">${num(data.scanned)} of ${num(data.total)} blocks. The list fills in as this runs, so counts are still low.</div>
+    <div class="meter"><span style="width:${data.total ? (data.scanned / data.total) * 100 : 0}%"></span></div>
+  </div>`;
+
+  setView(`<h1 class="page-title">Auction list</h1>
+    ${data.error ? notice(`Could not finish reading blocks: ${data.error}`) : ''}
+    ${progress}
+    <div class="tabs">${tabs}</div>
+    <div class="filters">
+      <label>Type
+        <select id="auction-type">
+          <option value="any"${type === 'any' ? ' selected' : ''}>Any</option>
+          <option value="ascii"${type === 'ascii' ? ' selected' : ''}>ASCII</option>
+          <option value="idn"${type === 'idn' ? ' selected' : ''}>IDN</option>
+        </select>
+      </label>
+      <span class="muted">${num(matches.length)} name${matches.length === 1 ? '' : 's'}</span>
+    </div>
+    <div class="panel scroll"><table><thead><tr>${heads.join('')}</tr></thead><tbody>
+      ${auctionRows(shown, tab, data.tip) || `<tr><td colspan="${heads.length}" class="muted">No auctions at this stage.</td></tr>`}
+    </tbody></table></div>
+    ${pages > 1 ? `<div class="pager">
+      <span>${current > 0 ? '<button class="sort" data-page="-1">← Previous</button>' : ''}</span>
+      <span class="muted">Page ${current + 1} of ${pages}</span>
+      <span>${current < pages - 1 ? '<button class="sort" data-page="1">Next →</button>' : ''}</span>
+    </div>` : ''}
+    <p class="hint">Bids in a sealed auction are hidden, so lockup is the most a bid could be, not the bid itself. Real bids appear at reveal. Times assume 10 minutes per block.</p>`, keepScroll);
+}
+
+const onNames = () => /^#\/names(\/|$)/.test(location.hash);
+let auctionPoll = null;
+
+async function loadAuctions(keepScroll) {
+  clearTimeout(auctionPoll);
+  const data = await api('auctions');
+  if (!onNames()) return;
+  if (data.spv) return showError(SPV_NOTICE);
+  auctionView.data = data;
+  renderAuctions(keepScroll);
+  if (!data.finished && !data.error) {
+    auctionPoll = setTimeout(() => loadAuctions(true).catch(() => {}), 4000);
+  }
+}
+
+async function viewNames(tab) {
+  const next = AUCTION_TABS.some(([id]) => id === tab) ? tab : 'bidding';
+  if (next !== auctionView.tab) {
+    auctionView.tab = next;
+    auctionView.key = 'end';
+    auctionView.dir = -1;
+    auctionView.page = 0;
+  }
+  if (auctionView.data) {
+    // Switch at once from what's already loaded, then refresh behind it.
+    renderAuctions();
+    return loadAuctions(true);
+  }
+  loading('Loading auctions…');
+  return loadAuctions();
+}
+
+view.addEventListener('click', e => {
+  const sort = e.target.closest('[data-sort]');
+  const page = e.target.closest('[data-page]');
+  if (sort) {
+    const key = sort.dataset.sort;
+    auctionView.dir = auctionView.key === key ? -auctionView.dir : (key === 'name' || key === 'end' ? 1 : -1);
+    auctionView.key = key;
+    auctionView.page = 0;
+    renderAuctions(true);
+  } else if (page) {
+    auctionView.page += Number(page.dataset.page);
+    renderAuctions();
+  }
+});
+
+view.addEventListener('change', e => {
+  if (e.target.id !== 'auction-type') return;
+  auctionView.type = e.target.value;
+  auctionView.page = 0;
+  renderAuctions(true);
+});
+
 // ---- names -----------------------------------------------------------------
 
 const STAT_LABELS = {
@@ -690,7 +856,7 @@ async function viewSearchHash(hash) {
 // ---- router ----------------------------------------------------------------
 
 function markNav(kind) {
-  const section = kind === 'block' ? 'blocks' : kind || '';
+  const section = {block: 'blocks', name: 'names'}[kind] || kind || '';
   for (const a of document.querySelectorAll('[data-nav]')) {
     a.classList.toggle('active', a.dataset.nav === section);
   }
@@ -704,6 +870,7 @@ async function route() {
   try {
     switch (kind) {
       case 'blocks': return await viewBlocks(arg);
+      case 'names': return await viewNames(arg);
       case 'mempool': return await viewMempool();
       case 'name': return await viewName(arg);
       case 'block': return await viewBlock(arg);
