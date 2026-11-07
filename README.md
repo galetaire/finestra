@@ -64,7 +64,7 @@ See `docker/web/node-proxy.js` in the
 
 1. In umbrelOS, add both community app stores (Settings → App store → the `…`
    menu → *Add app store*):
-   - `https://github.com/galetaire/bob-umbrel`
+   - `https://github.com/galetaire/bob-dns`
    - `https://github.com/galetaire/finestra`
 2. Install **Bob DNS** and let it sync (full-node mode).
 3. Install **Finestra** and open it.
