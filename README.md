@@ -2,7 +2,7 @@
 
 A simple, **read-only Handshake (HNS) block explorer** that runs as an
 [umbrelOS](https://umbrel.com) app and reads all of its data from **your own
-node** — the [Bob DNS](https://github.com/galetaire/bob-umbrel) app — over your
+node** — the [Bob DNS](https://github.com/galetaire/bob-dns) app — over your
 Umbrel's internal network. Nothing leaves your machine, and there is no second
 blockchain to sync.
 
@@ -51,7 +51,7 @@ the Docker network (`bob-wallet_server_1:3100`) that is:
 - **key-free for Finestra** — Bob injects its own node API key, so Finestra never sees it.
 
 See `docker/web/node-proxy.js` in the
-[bob-umbrel](https://github.com/galetaire/bob-umbrel) repo for that side.
+[bob-dns](https://github.com/galetaire/bob-dns) repo for that side.
 
 ## Requirements
 
