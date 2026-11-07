@@ -21,7 +21,7 @@ const PORT = Number(process.env.PORT || 3000);
 const BOB_PROXY = (process.env.BOB_NODE_PROXY_URL || 'http://bob-wallet_server_1:3100').replace(/\/+$/, '');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-// Mirrors docker/web/node-proxy.js in the bob-umbrel repo.
+// Mirrors docker/web/node-proxy.js in the bob-dns repo.
 const ALLOWED_RPC = new Set([
   'getinfo', 'getblockchaininfo', 'getnetworkinfo', 'getmininginfo',
   'getblockcount', 'getbestblockhash', 'getdifficulty', 'getconnectioncount',

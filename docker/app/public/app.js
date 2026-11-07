@@ -68,13 +68,131 @@ async function nodeIsSpv() {
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => (
   {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
+// ---- punycode (RFC 3492) ---------------------------------------------------
+//
+// Handshake names are plain ASCII, so emoji and other Unicode names are stored
+// in their "xn--" encoded form.
+
+const PUNY = {base: 36, tMin: 1, tMax: 26, skew: 38, damp: 700, bias: 72, first: 128};
+
+function punyAdapt(delta, points, firstTime) {
+  let d = firstTime ? Math.floor(delta / PUNY.damp) : delta >> 1;
+  d += Math.floor(d / points);
+  let k = 0;
+  while (d > ((PUNY.base - PUNY.tMin) * PUNY.tMax) >> 1) {
+    d = Math.floor(d / (PUNY.base - PUNY.tMin));
+    k += PUNY.base;
+  }
+  return k + Math.floor(((PUNY.base - PUNY.tMin + 1) * d) / (d + PUNY.skew));
+}
+
+const punyThreshold = (k, bias) => (
+  k <= bias ? PUNY.tMin : k >= bias + PUNY.tMax ? PUNY.tMax : k - bias);
+
+function punyDecode(input) {
+  const output = [];
+  const split = input.lastIndexOf('-');
+  for (let i = 0; i < Math.max(split, 0); i++) {
+    if (input.charCodeAt(i) >= 128) throw new Error('Not ASCII');
+    output.push(input.charCodeAt(i));
+  }
+  let n = PUNY.first;
+  let i = 0;
+  let bias = PUNY.bias;
+  let pos = split > 0 ? split + 1 : 0;
+  while (pos < input.length) {
+    const oldI = i;
+    let w = 1;
+    for (let k = PUNY.base; ; k += PUNY.base) {
+      if (pos >= input.length) throw new Error('Truncated');
+      const c = input.charCodeAt(pos++);
+      const digit = c >= 48 && c <= 57 ? c - 22 : c >= 97 && c <= 122 ? c - 97 : c >= 65 && c <= 90 ? c - 65 : PUNY.base;
+      if (digit >= PUNY.base) throw new Error('Bad digit');
+      i += digit * w;
+      const t = punyThreshold(k, bias);
+      if (digit < t) break;
+      w *= PUNY.base - t;
+    }
+    const count = output.length + 1;
+    bias = punyAdapt(i - oldI, count, oldI === 0);
+    n += Math.floor(i / count);
+    i %= count;
+    if (n > 0x10ffff) throw new Error('Out of range');
+    output.splice(i++, 0, n);
+  }
+  return String.fromCodePoint(...output);
+}
+
+function punyEncode(input) {
+  const points = Array.from(input, c => c.codePointAt(0));
+  const basic = points.filter(p => p < 128);
+  let output = String.fromCharCode(...basic);
+  let handled = basic.length;
+  if (handled) output += '-';
+  let n = PUNY.first;
+  let delta = 0;
+  let bias = PUNY.bias;
+  const encodeDigit = d => String.fromCharCode(d < 26 ? d + 97 : d + 22);
+  while (handled < points.length) {
+    const next = Math.min(...points.filter(p => p >= n));
+    delta += (next - n) * (handled + 1);
+    n = next;
+    for (const p of points) {
+      if (p < n) delta++;
+      if (p !== n) continue;
+      let q = delta;
+      for (let k = PUNY.base; ; k += PUNY.base) {
+        const t = punyThreshold(k, bias);
+        if (q < t) break;
+        output += encodeDigit(t + ((q - t) % (PUNY.base - t)));
+        q = Math.floor((q - t) / (PUNY.base - t));
+      }
+      output += encodeDigit(q);
+      bias = punyAdapt(delta, handled + 1, handled === basic.length);
+      delta = 0;
+      handled++;
+    }
+    delta++;
+    n++;
+  }
+  return output;
+}
+
+// The Unicode form of an "xn--" name, or null if it doesn't have a valid one.
+function unicodeName(name) {
+  if (!/^xn--/i.test(name)) return null;
+  try {
+    const decoded = punyDecode(name.slice(4).toLowerCase());
+    const real = /[^\x00-\x7f]/.test(decoded) && punyEncode(decoded) === name.slice(4).toLowerCase();
+    // Joiners build emoji like families; other invisible or text-direction
+    // characters would show nothing, or could disguise what a name says.
+    const hidden = /[\p{C}\p{Z}]/u.test(decoded.replace(/[‌‍]/g, ''));
+    return real && !hidden ? decoded : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// What a typed name is stored as: emoji and other Unicode become "xn--" names.
+function asciiName(name) {
+  // Emoji pickers often add an invisible variation selector, as in "☕️".
+  const lower = name.normalize('NFC').toLowerCase().replace(/[︀-️]/g, '');
+  return /[^\x00-\x7f]/.test(lower) ? `xn--${punyEncode(lower)}` : lower;
+}
+
+// ---- formatting (continued) ------------------------------------------------
+
 const hns = (doos, digits = 6) => (Number(doos || 0) / DOOS)
   .toLocaleString(undefined, {maximumFractionDigits: digits}) + ' HNS';
 const num = n => Number(n || 0).toLocaleString();
 const shorten = (s, n = 10) => !s ? '' : (s.length <= n * 2 + 1 ? s : `${s.slice(0, n)}…${s.slice(-n)}`);
 const when = t => t ? new Date(t * 1000).toLocaleString() : '—';
 const link = (href, text, cls) => `<a href="${href}"${cls ? ` class="${cls}"` : ''}>${esc(text)}</a>`;
-const nameLink = name => link(`#/name/${encodeURIComponent(name)}`, name);
+function displayName(name) {
+  const unicode = unicodeName(name);
+  return unicode ? `${name} (${unicode})` : name;
+}
+const nameLink = name => link(`#/name/${encodeURIComponent(name)}`, displayName(name));
 const blockLink = height => link(`#/block/${height}`, num(height));
 const txLink = (hash, n = 10) => link(`#/tx/${hash}`, shorten(hash, n), 'mono');
 const addressLink = (address, n = 10) => link(`#/address/${address}`, shorten(address, n), 'mono');
@@ -191,7 +309,7 @@ function classify(q) {
   if (/^\d+$/.test(s)) return {type: 'block', id: s};
   if (/^[0-9a-fA-F]{64}$/.test(s)) return {type: 'hash', id: s.toLowerCase()};
   if (/^(hs|ts|rs|ss)1[0-9ac-hj-np-z]{10,}$/i.test(s)) return {type: 'address', id: s};
-  return {type: 'name', id: s.toLowerCase()};
+  return {type: 'name', id: asciiName(s)};
 }
 
 function go(q) {
@@ -363,7 +481,7 @@ async function viewName(name) {
   const records = resource && Array.isArray(resource.records) ? resource.records : [];
   const recordRows = records.map(r => `<tr><td class="nowrap">${esc(r.type)}</td><td>${esc(recordDetail(r))}</td></tr>`);
 
-  setView(`<h1 class="page-title">${esc(name)} <small>Handshake name</small></h1>
+  setView(`<h1 class="page-title">${esc(displayName(name))} <small>Handshake name</small></h1>
     ${behind ? notice('Your Bob node is still syncing, so this information may be out of date. A registered name can show as unregistered until the sync finishes.') : ''}
     ${kv(pairs)}
     <h2>DNS records</h2>
