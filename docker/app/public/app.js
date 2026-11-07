@@ -349,14 +349,14 @@ async function viewHome(quiet) {
     ${stat('Issued', hns(issued, 0))}
     ${stat('Burned', hns(o.state.burned, 0))}
     ${stat('Peers', num(o.connections), `hsd ${esc(o.version)}`)}
-    ${stat('Block time', o.blockTime != null ? duration(o.blockTime) : '—', 'Last 10 blocks')}
+    ${stat('Block time', o.blockTime != null ? duration(o.blockTime) : '—', 'Last 25 blocks')}
   </div>`;
 
-  const activity = o.activity.map(a => `<li>
-    <span>${badge(a.action)}</span>
-    <span class="name">${a.name ? nameLink(a.name) : txLink(a.tx, 6)}</span>
-    <span class="muted nowrap">${age(a.time)}</span>
-  </li>`).join('');
+  const activity = o.activity.map(a => `<tr>
+    <td>${badge(a.action)}</td>
+    <td class="name">${a.name ? nameLink(a.name) : txLink(a.tx, 6)}</td>
+    <td class="right muted nowrap">${age(a.time)}</td>
+  </tr>`);
 
   setView(`
     ${o.spv ? notice(SPV_NOTICE) : ''}
@@ -368,9 +368,7 @@ async function viewHome(quiet) {
       <div><h2>Latest blocks <a href="#/blocks">See more</a></h2>
         ${blockTable(o.blocks, o.spv ? 'Not available in SPV mode.' : 'No blocks yet.')}</div>
       <div><h2>Name activity</h2>
-        <div class="panel">${activity
-          ? `<ul class="activity">${activity}</ul>`
-          : `<div class="empty">No name activity in the latest blocks.</div>`}</div></div>
+        <div class="activity">${table(['Action', 'Name', '>Time'], activity, 'No name activity in the latest blocks.')}</div></div>
     </div>`, quiet);
 }
 

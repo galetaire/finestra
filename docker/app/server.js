@@ -115,9 +115,9 @@ async function nodeRest(rest) {
   return data;
 }
 
-const LATEST_BLOCKS = 10;
+const LATEST_BLOCKS = 25;
 const PAGE_BLOCKS = 25;
-const ACTIVITY_ITEMS = 30;
+const ACTIVITY_ITEMS = 25;
 const ACTIVITY_BLOCKS = 36;
 const CACHE_LIMIT = 2000;
 // Blocks this deep are treated as final, so they can stay cached.

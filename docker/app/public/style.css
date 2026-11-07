@@ -224,18 +224,12 @@ tbody tr:hover { background: var(--panel-2); }
 .badge.LOCKED, .badge.REVOKED, .badge.REVOKE { background: var(--badge-bad-bg); color: var(--bad); }
 .badges { display: flex; flex-wrap: wrap; gap: 6px; }
 
-.activity { list-style: none; margin: 0; padding: 0; }
-.activity li {
-  display: grid;
-  grid-template-columns: 84px minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 16px;
-  border-top: 1px solid var(--border);
-  font-size: 14px;
-}
-.activity li:first-child { border-top: none; }
+.activity table { table-layout: fixed; }
+.activity th:first-child { width: 112px; }
+.activity th:last-child { width: 96px; }
 .activity .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Same height as the blocks table beside it, whatever a cell contains. */
+.columns td { height: 44px; padding-top: 0; padding-bottom: 0; }
 
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; padding: 4px; background: var(--panel); border-radius: var(--radius); }
 .tab { flex: 1 1 auto; padding: 8px 14px; border-radius: 9px; color: var(--muted); font-weight: 700; text-align: center; }
@@ -305,5 +299,6 @@ pre.json {
   th, td { padding: 10px 12px; }
   .stat .value { font-size: 22px; }
   .hide-small { display: none; }
-  .activity li { grid-template-columns: 76px minmax(0, 1fr) auto; }
+  .activity th:first-child { width: 100px; }
+  .activity th:last-child { width: 84px; }
 }
